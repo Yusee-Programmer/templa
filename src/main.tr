@@ -1,0 +1,237 @@
+# main.tr — templa CLI entry point
+#
+# Usage:
+#   templa <template.html> [key=value ...]
+#   templa --string "Hello {{ name }}!" name=World
+#   templa --test
+
+from std.io import File
+from std.os import OS
+from lexer import lex
+from parser import parse
+from context import Context
+from renderer import Renderer
+
+def main(argv: Vec[str]) -> int:
+    if argv.len <= 1:
+        _usage()
+        return 0
+
+    mut i = 1
+    mut template_file = ""
+    mut inline_src    = ""
+    mut template_dir  = "."
+    mut run_tests     = false
+    mut auto_escape   = false
+    mut ctx = Context.init()
+
+    while i < argv.len:
+        mut arg = argv.get(i)
+
+        if arg == "--help" or arg == "-h":
+            _usage()
+            return 0
+
+        elif arg == "--test":
+            run_tests = true
+            i = i + 1
+
+        elif arg == "--escape" or arg == "-e":
+            auto_escape = true
+            i = i + 1
+
+        elif arg == "--string" or arg == "-s":
+            i = i + 1
+            if i < argv.len:
+                inline_src = argv.get(i)
+                i = i + 1
+
+        elif arg == "--dir" or arg == "-d":
+            i = i + 1
+            if i < argv.len:
+                template_dir = argv.get(i)
+                i = i + 1
+
+        elif arg.contains("=") and not arg.starts_with("-"):
+            mut eq = arg.index_of("=")
+            mut key = arg.slice(0, eq)
+            mut val = arg.slice(eq + 1, arg.len())
+            if val.contains(","):
+                mut items = val.split(",")
+                ctx.set_list(key, items)
+            else:
+                ctx.set(key, val)
+            i = i + 1
+
+        elif not arg.starts_with("-") and template_file == "":
+            template_file = arg
+            i = i + 1
+
+        else:
+            print("warning: unknown argument '" + arg + "'")
+            i = i + 1
+
+    if run_tests:
+        return _run_builtin_tests()
+
+    mut src = ""
+    if inline_src.len() > 0:
+        src = inline_src
+    elif template_file.len() > 0:
+        if not File.file_exists(template_file):
+            print("error: template file not found: " + template_file)
+            return 1
+        src = File.read_text(template_file)
+        mut ti = template_file.len() - 1
+        while ti >= 0:
+            mut tc = template_file.char_at(ti)
+            if tc == 47 or tc == 92:
+                template_dir = template_file.slice(0, ti)
+                break
+            ti = ti - 1
+    else:
+        print("error: no template specified. Use --string or pass a file path.")
+        _usage()
+        return 1
+
+    mut tokens = lex(src)
+    mut root   = parse(tokens)
+    mut r = Renderer.init(template_dir)
+    r.auto_escape = auto_escape
+    mut output = r.render(root, ctx)
+    print(output)
+    return 0
+
+
+def _usage():
+    print("templa v0.1.0 — Jinja2-like template engine written in Tauraro")
+    print("")
+    print("Usage:")
+    print("  templa <template> [key=value ...]     Render a template file")
+    print("  templa --string \"<src>\" [key=value ...] Render an inline template")
+    print("  templa --test                          Run built-in self-tests")
+    print("")
+    print("Options:")
+    print("  -d, --dir <dir>    Template search directory (for includes/extends)")
+    print("  -e, --escape       Auto HTML-escape {{ }} output")
+    print("  -h, --help         Show this help")
+    print("")
+    print("Variable types:")
+    print("  name=Alice         Scalar")
+    print("  items=a,b,c        List (comma-separated values)")
+    print("")
+    print("Template syntax:")
+    print("  {{ variable }}           Output a variable")
+    print("  {{ x | upper }}          Apply a filter")
+    print("  {% if cond %}...{% endif %}")
+    print("  {% for x in list %}...{% endfor %}")
+    print("  {% set x = \"value\" %}")
+    print("  {% include \"file.html\" %}")
+    print("  {% extends \"base.html\" %} + {% block name %}...{% endblock %}")
+    print("  {# this is a comment #}")
+    print("")
+    print("Built-in filters:")
+    print("  upper lower trim capitalize title reverse length")
+    print("  default(val) replace(from,to) truncate(n) wordcount abs escape")
+
+
+def _run_builtin_tests() -> int:
+    mut passed = 0
+    mut failed = 0
+
+    print("Running templa self-tests...")
+
+    mut results = Vec[str].init(16)
+
+    # --- variable ---
+    mut c1 = Context.init()
+    c1.set("name", "World")
+    results.push(_check("variable", "Hello {{ name }}!", c1, "Hello World!"))
+
+    # --- filter: upper ---
+    mut c2 = Context.init()
+    c2.set("city", "london")
+    results.push(_check("filter:upper", "{{ city | upper }}", c2, "LONDON"))
+
+    # --- filter: default ---
+    mut c3 = Context.init()
+    results.push(_check("filter:default", "{{ x | default(\"n/a\") }}", c3, "n/a"))
+
+    # --- if true ---
+    mut c4 = Context.init()
+    c4.set("show", "true")
+    results.push(_check("if:true", "{% if show %}yes{% endif %}", c4, "yes"))
+
+    # --- if false ---
+    mut c5 = Context.init()
+    results.push(_check("if:false", "{% if gone %}yes{% endif %}", c5, ""))
+
+    # --- if/else ---
+    mut c6 = Context.init()
+    c6.set("logged_in", "true")
+    results.push(_check("if:else", "{% if logged_in %}in{% else %}out{% endif %}", c6, "in"))
+
+    # --- for loop ---
+    mut c7 = Context.init()
+    mut items = Vec[str].init(3)
+    items.push("a")
+    items.push("b")
+    items.push("c")
+    c7.set_list("items", items)
+    results.push(_check("for:list", "{% for x in items %}{{ x }}{% endfor %}", c7, "abc"))
+
+    # --- loop.index ---
+    mut c8 = Context.init()
+    mut nums = Vec[str].init(2)
+    nums.push("x")
+    nums.push("y")
+    c8.set_list("nums", nums)
+    results.push(_check("for:index", "{% for n in nums %}{{ loop.index }}{{ n }}{% endfor %}", c8, "1x2y"))
+
+    # --- comment ---
+    mut c9 = Context.init()
+    results.push(_check("comment", "a{# ignored #}b", c9, "ab"))
+
+    # --- set ---
+    mut c10 = Context.init()
+    results.push(_check("set", "{% set x = \"hi\" %}{{ x }}", c10, "hi"))
+
+    # --- nested if ---
+    mut c11 = Context.init()
+    c11.set("a", "true")
+    c11.set("b", "true")
+    results.push(_check("if:nested", "{% if a %}{% if b %}both{% endif %}{% endif %}", c11, "both"))
+
+    # --- filter chain ---
+    mut c12 = Context.init()
+    c12.set("msg", "  hello world  ")
+    results.push(_check("filter:chain", "{{ msg | trim | upper }}", c12, "HELLO WORLD"))
+
+    # --- for over csv scalar ---
+    mut c13 = Context.init()
+    c13.set("tags", "go,rust,tauraro")
+    results.push(_check("for:csv", "[{% for t in tags %}{{ t }}{% endfor %}]", c13, "[gorusttauraro]"))
+
+    # Tally
+    mut ri = 0
+    while ri < results.len:
+        mut line = results.get(ri)
+        print(line)
+        if line.starts_with("  PASS"): passed = passed + 1
+        else: failed = failed + 1
+        ri = ri + 1
+
+    print("")
+    print("Results: " + passed.to_str() + " passed, " + failed.to_str() + " failed.")
+    if failed > 0: return 1
+    return 0
+
+
+def _check(name: str, template: str, ctx: Context, expected: str) -> str:
+    mut tokens = lex(template)
+    mut root   = parse(tokens)
+    mut r = Renderer.init(".")
+    mut got = r.render(root, ctx)
+    if got == expected:
+        return "  PASS  " + name
+    return "  FAIL  " + name + " | expected: [" + expected + "] got: [" + got + "]"

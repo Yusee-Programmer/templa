@@ -1,0 +1,72 @@
+# context.tr — template variable context
+#
+# Map has no key iterator, so we maintain parallel Vec[str] for key order.
+
+pub class Context:
+    pub vars:      Map[str, str]
+    pub lists:     Map[str, Vec[str]]
+    pub var_keys:  Vec[str]
+    pub list_keys: Vec[str]
+
+extend Context:
+    pub def init() -> Context:
+        mut c = Context()
+        c.vars      = Map[str, str].init(16)
+        c.lists     = Map[str, Vec[str]].init(8)
+        c.var_keys  = Vec[str].init(16)
+        c.list_keys = Vec[str].init(8)
+        return c
+
+    pub def set(self, key: str, val: str):
+        if not self.vars.contains(key):
+            self.var_keys.push(key)
+        self.vars.insert(key, val)
+
+    pub def set_list(self, key: str, items: Vec[str]):
+        if not self.lists.contains(key):
+            self.list_keys.push(key)
+        self.lists.insert(key, items)
+
+    pub def get(self, key: str) -> str:
+        if self.vars.contains(key): return self.vars.get(key)
+        return ""
+
+    pub def has_list(self, key: str) -> bool:
+        return self.lists.contains(key)
+
+    pub def get_list(self, key: str) -> Vec[str]:
+        if self.lists.contains(key): return self.lists.get(key)
+        return Vec[str].init(0)
+
+    # Evaluate a simple expression: variable, string literal, "true"/"false".
+    pub def eval(self, expr: str) -> str:
+        mut e = expr.trim()
+        mut n = e.len()
+        if n >= 2:
+            mut first = e.char_at(0)
+            mut last  = e.char_at(n - 1)
+            if (first == 34 and last == 34) or (first == 39 and last == 39):
+                return e.slice(1, n - 1)
+        if e == "true":  return "true"
+        if e == "false" or e == "none" or e == "null": return ""
+        return self.get(e)
+
+    pub def is_truthy(self, expr: str) -> bool:
+        mut val = self.eval(expr)
+        return val != "" and val != "false" and val != "0"
+
+    # Create a child context for a loop iteration, inheriting all parent vars/lists.
+    pub def child(self, loop_var: str, loop_val: str) -> Context:
+        mut c = Context.init()
+        mut i = 0
+        while i < self.var_keys.len:
+            mut k = self.var_keys.get(i)
+            c.set(k, self.vars.get(k))
+            i = i + 1
+        mut j = 0
+        while j < self.list_keys.len:
+            mut k = self.list_keys.get(j)
+            c.set_list(k, self.lists.get(k))
+            j = j + 1
+        c.set(loop_var, loop_val)
+        return c

@@ -1,0 +1,7 @@
+# token.tr — template token types produced by the lexer
+
+pub enum Token:
+    TText(s: str)          # raw text
+    TVar(s: str)           # {{ ... }}
+    TBlock(s: str)         # {% ... %}
+    TComment(s: str)       # {# ... #}

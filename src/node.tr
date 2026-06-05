@@ -1,0 +1,20 @@
+# node.tr — AST node types for the parsed template
+
+from core.alloc import alloc
+
+pub enum Node:
+    NText(s: str)
+    NVar(expr: str, filters: Vec[str])
+    NIf(cond: str, then_body: Vec[Pointer[Node]], else_body: Vec[Pointer[Node]])
+    NFor(var: str, iter_name: str, body: Vec[Pointer[Node]])
+    NBlock(name: str, body: Vec[Pointer[Node]])
+    NExtends(template_name: str)
+    NInclude(template_name: str)
+    NSet(var: str, value: str)
+    NComment
+    NRoot(children: Vec[Pointer[Node]])
+
+pub def box_node(n: Node) -> Pointer[Node]:
+    mut p = alloc[Node](1)
+    p.write(n)
+    return p

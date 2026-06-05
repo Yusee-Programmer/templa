@@ -1,0 +1,81 @@
+# lexer.tr — tokenise a template string into a flat list of Tokens
+
+from token import Token
+
+pub def lex(src: str) -> Vec[Token]:
+    mut tokens = Vec[Token].init(16)
+    mut i = 0
+    mut n = src.len()
+    mut text_start = 0
+
+    while i < n:
+        # Look for opening delimiters
+        mut c0 = src.char_at(i)
+
+        if c0 == 123:  # '{'
+            if i + 1 < n:
+                mut c1 = src.char_at(i + 1)
+
+                # Flush accumulated text
+                if i > text_start:
+                    tokens.push(Token.TText(src.slice(text_start, i)))
+
+                if c1 == 123:  # {{ variable
+                    mut end = _find(src, "}}", i + 2)
+                    if end < 0:
+                        tokens.push(Token.TText(src.slice(i, n)))
+                        return tokens
+                    mut inner = src.slice(i + 2, end).trim()
+                    tokens.push(Token.TVar(inner))
+                    i = end + 2
+                    text_start = i
+                    continue
+
+                elif c1 == 37:  # {% block
+                    mut end = _find(src, "%}", i + 2)
+                    if end < 0:
+                        tokens.push(Token.TText(src.slice(i, n)))
+                        return tokens
+                    mut inner = src.slice(i + 2, end).trim()
+                    tokens.push(Token.TBlock(inner))
+                    i = end + 2
+                    text_start = i
+                    continue
+
+                elif c1 == 35:  # {# comment
+                    mut end = _find(src, "#}", i + 2)
+                    if end < 0:
+                        i = n
+                        text_start = i
+                        continue
+                    mut inner = src.slice(i + 2, end).trim()
+                    tokens.push(Token.TComment(inner))
+                    i = end + 2
+                    text_start = i
+                    continue
+
+        i = i + 1
+
+    if text_start < n:
+        tokens.push(Token.TText(src.slice(text_start, n)))
+
+    return tokens
+
+
+# Find needle in haystack starting at from_pos. Returns index or -1.
+pub def _find(haystack: str, needle: str, from_pos: int) -> int:
+    mut hn = haystack.len()
+    mut nn = needle.len()
+    if nn == 0: return from_pos
+    mut i = from_pos
+    while i <= hn - nn:
+        mut found = true
+        mut j = 0
+        while j < nn:
+            if haystack.char_at(i + j) != needle.char_at(j):
+                found = false
+                break
+            j = j + 1
+        if found: return i
+        i = i + 1
+    return -1

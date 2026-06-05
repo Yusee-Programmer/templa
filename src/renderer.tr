@@ -1,0 +1,126 @@
+# renderer.tr — walk the AST and produce the output string
+
+from std.io import File
+from node import Node, box_node
+from context import Context
+from filters import apply_filters
+from lexer import lex
+from parser import parse
+
+pub class Renderer:
+    pub template_dir: str
+    pub auto_escape:  bool
+
+extend Renderer:
+    pub def init(template_dir: str) -> Renderer:
+        mut r = Renderer()
+        r.template_dir = template_dir
+        r.auto_escape  = false
+        return r
+
+    pub def render(self, root: Node, ctx: Context) -> str:
+        match root:
+            case Node.NRoot(children):
+                return self.render_nodes(children, ctx)
+            case _:
+                return self.render_node(root, ctx)
+
+    pub def render_nodes(self, nodes: Vec[Pointer[Node]], ctx: Context) -> str:
+        mut out = ""
+        mut i = 0
+        while i < nodes.len:
+            out = out + self.render_node(nodes.get(i).read(), ctx)
+            i = i + 1
+        return out
+
+    pub def render_node(self, node: Node, ctx: Context) -> str:
+        match node:
+            case Node.NText(s):
+                return s
+
+            case Node.NComment:
+                return ""
+
+            case Node.NVar(expr, filters):
+                mut val = ctx.eval(expr)
+                if filters.len > 0:
+                    val = apply_filters(val, filters)
+                elif self.auto_escape:
+                    val = html_escape(val)
+                return val
+
+            case Node.NIf(cond, then_body, else_body):
+                if ctx.is_truthy(cond):
+                    return self.render_nodes(then_body, ctx)
+                elif else_body.len > 0:
+                    return self.render_nodes(else_body, ctx)
+                return ""
+
+            case Node.NFor(var, iter_name, body):
+                mut out = ""
+                mut items = ctx.get_list(iter_name)
+                if items.len == 0:
+                    mut scalar = ctx.get(iter_name)
+                    if scalar.len() > 0:
+                        items = scalar.split(",")
+                mut idx = 0
+                while idx < items.len:
+                    mut item = items.get(idx).trim()
+                    mut child_ctx = ctx.child(var, item)
+                    child_ctx.set("loop.index",  (idx + 1).to_str())
+                    child_ctx.set("loop.index0", idx.to_str())
+                    child_ctx.set("loop.first",  bool_str(idx == 0))
+                    child_ctx.set("loop.last",   bool_str(idx == items.len - 1))
+                    child_ctx.set("loop.length", items.len.to_str())
+                    out = out + self.render_nodes(body, child_ctx)
+                    idx = idx + 1
+                return out
+
+            case Node.NSet(var, value):
+                ctx.set(var, ctx.eval(value))
+                return ""
+
+            case Node.NInclude(tpl_name):
+                return self.render_file(tpl_name, ctx)
+
+            case Node.NExtends(_):
+                return ""
+
+            case Node.NBlock(_, body):
+                return self.render_nodes(body, ctx)
+
+            case Node.NRoot(children):
+                return self.render_nodes(children, ctx)
+
+        return ""
+
+    def render_file(self, name: str, ctx: Context) -> str:
+        mut path = name
+        if self.template_dir.len() > 0 and self.template_dir != ".":
+            path = self.template_dir + "/" + name
+        if not File.file_exists(path):
+            return "[include error: " + name + " not found]"
+        mut src = File.read_text(path)
+        mut tokens = lex(src)
+        mut root   = parse(tokens)
+        return self.render(root, ctx)
+
+
+pub def html_escape(s: str) -> str:
+    mut out = ""
+    mut i = 0
+    mut n = s.len()
+    while i < n:
+        mut c = s.char_at(i)
+        if c == 38:   out = out + "&amp;"
+        elif c == 60: out = out + "&lt;"
+        elif c == 62: out = out + "&gt;"
+        elif c == 34: out = out + "&quot;"
+        elif c == 39: out = out + "&#39;"
+        else:         out = out + s.slice(i, i + 1)
+        i = i + 1
+    return out
+
+pub def bool_str(b: bool) -> str:
+    if b: return "true"
+    return ""

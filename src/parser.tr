@@ -1,0 +1,183 @@
+# parser.tr — parse a flat token list into a Node tree
+#
+# Uses a Parser class so self.pos is mutated in-place across all parse methods.
+
+from token import Token
+from node import Node, box_node
+
+pub class Parser:
+    pub tokens: Vec[Token]
+    pub pos:    int
+
+extend Parser:
+    pub def init(tokens: Vec[Token]) -> Parser:
+        mut p = Parser()
+        p.tokens = tokens
+        p.pos    = 0
+        return p
+
+    pub def parse(self) -> Node:
+        mut stops = Vec[str].init(0)
+        mut children = self.parse_nodes(stops)
+        return Node.NRoot(children)
+
+    # Parse tokens into a node list, stopping before any keyword in `stops`.
+    def parse_nodes(self, stops: Vec[str]) -> Vec[Pointer[Node]]:
+        mut nodes = Vec[Pointer[Node]].init(8)
+
+        while self.pos < self.tokens.len:
+            mut tok = self.tokens.get(self.pos)
+
+            # Check stop keywords
+            if self.is_stop(stops):
+                break
+
+            match tok:
+                case Token.TText(s):
+                    if s.len() > 0:
+                        nodes.push(box_node(Node.NText(s)))
+                    self.pos = self.pos + 1
+
+                case Token.TComment(_):
+                    nodes.push(box_node(Node.NComment))
+                    self.pos = self.pos + 1
+
+                case Token.TVar(expr):
+                    nodes.push(box_node(self.parse_var(expr)))
+                    self.pos = self.pos + 1
+
+                case Token.TBlock(tag):
+                    self.parse_block_tag(tag, nodes)
+
+                case _:
+                    self.pos = self.pos + 1
+
+        return nodes
+
+    def parse_var(self, expr: str) -> Node:
+        mut parts = expr.split("|")
+        mut var_expr = parts.get(0).trim()
+        mut filters = Vec[str].init(4)
+        mut fi = 1
+        while fi < parts.len:
+            filters.push(parts.get(fi).trim())
+            fi = fi + 1
+        return Node.NVar(var_expr, filters)
+
+    def parse_block_tag(self, tag: str, nodes: Vec[Pointer[Node]]):
+        mut keyword = first_word(tag)
+        mut rest_s  = rest_after(tag, keyword)
+
+        if keyword == "if":
+            self.pos = self.pos + 1
+            mut then_stops = Vec[str].init(3)
+            then_stops.push("else")
+            then_stops.push("elif")
+            then_stops.push("endif")
+            mut then_body = self.parse_nodes(then_stops)
+            mut else_body = Vec[Pointer[Node]].init(0)
+            if self.pos < self.tokens.len:
+                mut next_kw = self.cur_block_keyword()
+                if next_kw == "else":
+                    self.pos = self.pos + 1
+                    mut endif_stops = Vec[str].init(1)
+                    endif_stops.push("endif")
+                    else_body = self.parse_nodes(endif_stops)
+                    if self.pos < self.tokens.len: self.pos = self.pos + 1  # endif
+                elif next_kw == "endif":
+                    self.pos = self.pos + 1
+            nodes.push(box_node(Node.NIf(rest_s, then_body, else_body)))
+
+        elif keyword == "for":
+            mut in_idx = rest_s.index_of(" in ")
+            mut var_name  = rest_s.trim()
+            mut iter_name = ""
+            if in_idx >= 0:
+                var_name  = rest_s.slice(0, in_idx).trim()
+                iter_name = rest_s.slice(in_idx + 4, rest_s.len()).trim()
+            self.pos = self.pos + 1
+            mut endfor_stops = Vec[str].init(1)
+            endfor_stops.push("endfor")
+            mut body = self.parse_nodes(endfor_stops)
+            if self.pos < self.tokens.len: self.pos = self.pos + 1  # endfor
+            nodes.push(box_node(Node.NFor(var_name, iter_name, body)))
+
+        elif keyword == "block":
+            self.pos = self.pos + 1
+            mut endblock_stops = Vec[str].init(1)
+            endblock_stops.push("endblock")
+            mut block_body = self.parse_nodes(endblock_stops)
+            if self.pos < self.tokens.len: self.pos = self.pos + 1  # endblock
+            nodes.push(box_node(Node.NBlock(rest_s.trim(), block_body)))
+
+        elif keyword == "extends":
+            nodes.push(box_node(Node.NExtends(strip_quotes(rest_s))))
+            self.pos = self.pos + 1
+
+        elif keyword == "include":
+            nodes.push(box_node(Node.NInclude(strip_quotes(rest_s))))
+            self.pos = self.pos + 1
+
+        elif keyword == "set":
+            mut eq = rest_s.index_of("=")
+            if eq > 0:
+                mut var_n = rest_s.slice(0, eq).trim()
+                # Keep raw value (with quotes) so ctx.eval() strips them as a string literal.
+                mut val_s = rest_s.slice(eq + 1, rest_s.len()).trim()
+                nodes.push(box_node(Node.NSet(var_n, val_s)))
+            self.pos = self.pos + 1
+
+        else:
+            # Unknown / closing tag — break out
+            self.pos = self.pos + 1
+
+    def is_stop(self, stops: Vec[str]) -> bool:
+        if self.pos >= self.tokens.len: return false
+        if stops.len == 0: return false
+        mut kw = self.cur_block_keyword()
+        if kw == "": return false
+        mut i = 0
+        while i < stops.len:
+            if kw == stops.get(i): return true
+            i = i + 1
+        return false
+
+    def cur_block_keyword(self) -> str:
+        if self.pos >= self.tokens.len: return ""
+        match self.tokens.get(self.pos):
+            case Token.TBlock(tag): return first_word(tag)
+            case _: return ""
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+pub def parse(tokens: Vec[Token]) -> Node:
+    mut p = Parser.init(tokens)
+    return p.parse()
+
+pub def first_word(s: str) -> str:
+    mut i = 0
+    mut n = s.len()
+    while i < n and (s.char_at(i) == 32 or s.char_at(i) == 9):
+        i = i + 1
+    mut start = i
+    while i < n and s.char_at(i) != 32 and s.char_at(i) != 9:
+        i = i + 1
+    if start == i: return ""
+    return s.slice(start, i)
+
+pub def rest_after(s: str, keyword: str) -> str:
+    mut klen = keyword.len()
+    mut tlen = s.len()
+    if tlen <= klen: return ""
+    return s.slice(klen, tlen).trim()
+
+pub def strip_quotes(s: str) -> str:
+    mut e = s.trim()
+    mut n = e.len()
+    if n >= 2:
+        mut first = e.char_at(0)
+        mut last  = e.char_at(n - 1)
+        if (first == 34 and last == 34) or (first == 39 and last == 39):
+            return e.slice(1, n - 1)
+    return e

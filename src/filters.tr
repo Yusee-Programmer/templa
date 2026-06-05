@@ -1,0 +1,119 @@
+# filters.tr — built-in template filters
+#
+# A filter takes a string value and optional argument, returns a string.
+# Usage in templates: {{ name | upper }}  {{ text | default("n/a") }}
+
+pub def apply_filter(value: str, filter_expr: str) -> str:
+    mut paren = filter_expr.index_of("(")
+    mut fname = ""
+    mut farg  = ""
+
+    if paren >= 0:
+        mut close = filter_expr.index_of(")")
+        fname = filter_expr.slice(0, paren).trim()
+        if close > paren:
+            farg = filter_expr.slice(paren + 1, close).trim()
+            # Strip quotes from argument
+            mut an = farg.len()
+            if an >= 2:
+                mut fa = farg.char_at(0)
+                mut fz = farg.char_at(an - 1)
+                if (fa == 34 and fz == 34) or (fa == 39 and fz == 39):
+                    farg = farg.slice(1, an - 1)
+    else:
+        fname = filter_expr.trim()
+
+    if fname == "upper" or fname == "upper_case":
+        return value.to_upper()
+
+    if fname == "lower" or fname == "lower_case":
+        return value.to_lower()
+
+    if fname == "trim" or fname == "strip":
+        return value.trim()
+
+    if fname == "length" or fname == "count" or fname == "len":
+        return value.len().to_str()
+
+    if fname == "reverse":
+        return value.reverse()
+
+    if fname == "capitalize":
+        return value.capitalize()
+
+    if fname == "title":
+        return value.title()
+
+    if fname == "default" or fname == "d":
+        if value == "": return farg
+        return value
+
+    if fname == "replace":
+        # replace("from,to") — comma-separated to avoid extra parsing
+        mut comma = farg.index_of(",")
+        if comma >= 0:
+            mut from_s = farg.slice(0, comma).trim()
+            mut to_s   = farg.slice(comma + 1, farg.len()).trim()
+            return value.replace(from_s, to_s)
+        return value
+
+    if fname == "truncate":
+        mut max_len = 50
+        if farg.len() > 0:
+            mut parsed = farg.parse_int()
+            if parsed > 0: max_len = parsed
+        if value.len() > max_len:
+            return value.slice(0, max_len) + "..."
+        return value
+
+    if fname == "wordcount":
+        mut words = value.split(" ")
+        mut count = 0
+        mut wi = 0
+        while wi < words.len:
+            if words.get(wi).trim().len() > 0: count = count + 1
+            wi = wi + 1
+        return count.to_str()
+
+    if fname == "escape" or fname == "e":
+        return _html_escape(value)
+
+    if fname == "safe":
+        return value  # no-op: mark as safe (no escaping)
+
+    if fname == "join":
+        return value  # value is already a rendered string; join is handled in renderer
+
+    if fname == "abs":
+        mut n = value.parse_int()
+        if n < 0: n = 0 - n
+        return n.to_str()
+
+    # Unknown filter — pass value through unchanged
+    return value
+
+
+# Apply a chain of filters to a value.
+pub def apply_filters(value: str, filters: Vec[str]) -> str:
+    mut result = value
+    mut i = 0
+    while i < filters.len:
+        result = apply_filter(result, filters.get(i))
+        i = i + 1
+    return result
+
+
+pub def _html_escape(s: str) -> str:
+    mut out = ""
+    mut i = 0
+    mut n = s.len()
+    while i < n:
+        mut c = s.char_at(i)
+        if c == 38:        out = out + "&amp;"
+        elif c == 60:      out = out + "&lt;"
+        elif c == 62:      out = out + "&gt;"
+        elif c == 34:      out = out + "&quot;"
+        elif c == 39:      out = out + "&#39;"
+        else:              out = out + s.slice(i, i + 1)
+        i = i + 1
+    return out
