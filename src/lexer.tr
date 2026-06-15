@@ -1,6 +1,6 @@
 # lexer.tr — tokenise a template string into a flat list of Tokens
 
-from token import Token
+from templa.src.token import Token
 
 pub def lex(src: str) -> Vec[Token]:
     mut tokens = Vec[Token].init(16)

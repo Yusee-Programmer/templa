@@ -2,8 +2,8 @@
 #
 # Uses a Parser class so self.pos is mutated in-place across all parse methods.
 
-from token import Token
-from node import Node, box_node
+from templa.src.token import Token
+from templa.src.node import Node, box_node
 
 pub class Parser:
     pub tokens: Vec[Token]

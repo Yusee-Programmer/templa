@@ -1,0 +1,41 @@
+# templa — package entry point.
+#
+# Re-exports templa's public API so other taupkg projects can do:
+#
+#   from templa import Context, Renderer, lex, parse, render_string, render_file
+#
+# Template syntax: {{ var }}, {{ var | filter }}, {% if %}/{% for %}/{% set %},
+# {% include %}, {% extends %}/{% block %}, {# comment #}.
+
+from templa.src.context import Context
+from templa.src.renderer import Renderer, html_escape, bool_str
+from templa.src.lexer import lex
+from templa.src.parser import parse
+from std.io import File
+
+# Render a template source string against a context. Relative
+# {% include %}/{% extends %} paths are resolved against the current
+# working directory.
+pub def render_string(src: str, ctx: Context) -> str:
+    mut tokens = lex(src)
+    mut root   = parse(tokens)
+    mut r = Renderer.init(".")
+    return r.render(root, ctx)
+
+# Render a template file against a context. {% include %}/{% extends %}
+# paths are resolved relative to the template file's directory.
+pub def render_file(path: str, ctx: Context) -> str:
+    mut src = File.read_text(path)
+    mut dir = "."
+    mut i = path.len() - 1
+    while i >= 0:
+        mut c = path.char_at(i)
+        if c == 47 or c == 92:
+            dir = path.slice(0, i)
+            i = -1
+        else:
+            i = i - 1
+    mut tokens = lex(src)
+    mut root   = parse(tokens)
+    mut r = Renderer.init(dir)
+    return r.render(root, ctx)

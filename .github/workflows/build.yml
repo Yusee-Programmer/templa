@@ -109,11 +109,32 @@ jobs:
           # Run the built-in self-tests — all 13 must pass
           "./templa${{ matrix.ext }}" --test
 
+      # -------------------------------------------------------
+      # SHA256 checksum of the binary for this platform. Bundled
+      # alongside the binary in the main artifact AND uploaded as its
+      # own artifact so it can be downloaded standalone and pasted
+      # into the release notes.
+      # -------------------------------------------------------
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          sha256sum "templa${{ matrix.ext }}" > "templa-${{ matrix.platform }}.sha256"
+          cat "templa-${{ matrix.platform }}.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: templa-${{ matrix.platform }}
-          path: templa${{ matrix.ext }}
+          path: |
+            templa${{ matrix.ext }}
+            templa-${{ matrix.platform }}.sha256
+
+      - name: Upload SHA256 checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: templa-${{ matrix.platform }}-sha256
+          if-no-files-found: error
+          path: templa-${{ matrix.platform }}.sha256
 
   # -----------------------------------------------------------------
   # Release: triggered only on v* tag pushes after all builds pass.
@@ -150,6 +171,33 @@ jobs:
           name: templa-macos-arm64
           path: release/macos-arm64/
 
+      # Per-platform binary checksums (generated during the build job),
+      # downloaded here so they can be folded into the combined
+      # SHA256SUMS.txt and also published as individual release assets.
+      - name: Download linux-x64 checksum
+        uses: actions/download-artifact@v4
+        with:
+          name: templa-linux-x64-sha256
+          path: release/checksums/
+
+      - name: Download linux-arm64 checksum
+        uses: actions/download-artifact@v4
+        with:
+          name: templa-linux-arm64-sha256
+          path: release/checksums/
+
+      - name: Download windows-x64 checksum
+        uses: actions/download-artifact@v4
+        with:
+          name: templa-windows-x64-sha256
+          path: release/checksums/
+
+      - name: Download macos-arm64 checksum
+        uses: actions/download-artifact@v4
+        with:
+          name: templa-macos-arm64-sha256
+          path: release/checksums/
+
       - name: Create release zips
         run: |
           mkdir -p release/assets
@@ -157,6 +205,21 @@ jobs:
           zip -j release/assets/templa-linux-arm64.zip release/linux-arm64/templa
           zip -j release/assets/templa-windows-x64.zip release/windows-x64/templa.exe
           zip -j release/assets/templa-macos-arm64.zip release/macos-arm64/templa
+
+      # -------------------------------------------------------
+      # Combined SHA256SUMS.txt: checksums of the release zips
+      # (what users actually download) plus the raw per-platform
+      # binary checksums produced during the build job.
+      # -------------------------------------------------------
+      - name: Generate combined SHA256SUMS.txt
+        run: |
+          cd release/assets
+          sha256sum *.zip > SHA256SUMS.txt
+          cd -
+          echo "" >> release/assets/SHA256SUMS.txt
+          echo "# Per-platform binary checksums (uncompressed):" >> release/assets/SHA256SUMS.txt
+          cat release/checksums/*.sha256 >> release/assets/SHA256SUMS.txt
+          cat release/assets/SHA256SUMS.txt
 
       - name: Create GitHub Release
         env:
@@ -168,4 +231,5 @@ jobs:
             release/assets/templa-linux-x64.zip \
             release/assets/templa-linux-arm64.zip \
             release/assets/templa-windows-x64.zip \
-            release/assets/templa-macos-arm64.zip
+            release/assets/templa-macos-arm64.zip \
+            release/assets/SHA256SUMS.txt

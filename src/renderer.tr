@@ -1,26 +1,62 @@
 # renderer.tr — walk the AST and produce the output string
 
 from std.io import File
-from node import Node, box_node
-from context import Context
-from filters import apply_filters
-from lexer import lex
-from parser import parse
+from templa.src.node import Node, box_node
+from templa.src.context import Context
+from templa.src.filters import apply_filters
+from templa.src.lexer import lex
+from templa.src.parser import parse
 
 pub class Renderer:
     pub template_dir: str
     pub auto_escape:  bool
+    pub block_overrides: Map[str, Vec[Pointer[Node]]]
 
 extend Renderer:
     pub def init(template_dir: str) -> Renderer:
         mut r = Renderer()
         r.template_dir = template_dir
         r.auto_escape  = false
+        r.block_overrides = Map[str, Vec[Pointer[Node]]].init(8)
         return r
 
     pub def render(self, root: Node, ctx: Context) -> str:
         match root:
             case Node.NRoot(children):
+                # A child template that `{% extends %}` a parent: collect this
+                # template's `{% block %}` overrides, then render the parent
+                # template in its place (the parent's matching blocks will be
+                # substituted in render_node).
+                mut extends_name = ""
+                mut i = 0
+                while i < children.len:
+                    match children.get(i).read():
+                        case Node.NExtends(name):
+                            extends_name = name
+                        case _:
+                            pass
+                    i = i + 1
+                if extends_name.len() > 0:
+                    # Only a template that itself `{% extends %}` contributes
+                    # block overrides - the parent's own top-level blocks are
+                    # just defaults and must not clobber these.
+                    i = 0
+                    while i < children.len:
+                        match children.get(i).read():
+                            case Node.NBlock(bname, bbody):
+                                self.block_overrides.set(bname, bbody)
+                            case _:
+                                pass
+                        i = i + 1
+                    mut path = extends_name
+                    if self.template_dir.len() > 0 and self.template_dir != ".":
+                        path = self.template_dir + "/" + extends_name
+                    if not File.file_exists(path):
+                        return "[extends error: " + extends_name + " not found]"
+                    mut src = File.read_text(path)
+                    mut tokens = lex(src)
+                    mut parent_root = parse(tokens)
+                    return self.render(parent_root, ctx)
                 return self.render_nodes(children, ctx)
             case _:
                 return self.render_node(root, ctx)
@@ -86,7 +122,9 @@ extend Renderer:
             case Node.NExtends(_):
                 return ""
 
-            case Node.NBlock(_, body):
+            case Node.NBlock(name, body):
+                if self.block_overrides.contains(name):
+                    return self.render_nodes(self.block_overrides.get(name), ctx)
                 return self.render_nodes(body, ctx)
 
             case Node.NRoot(children):
