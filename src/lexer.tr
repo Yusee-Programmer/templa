@@ -2,7 +2,10 @@
 
 from templa.src.token import Token
 
-pub def lex(src: str) -> Vec[Token]:
+# `src: ref str` — src is only read (indexed/sliced); token payloads are
+# new owned strings (Str.slice allocations). Under --strict the compiler
+# proves src is never stored, eliding any ARC retain/release on the input.
+pub def lex(src: ref str) -> Vec[Token]:
     mut tokens = Vec[Token].init(16)
     mut i = 0
     mut n = src.len()

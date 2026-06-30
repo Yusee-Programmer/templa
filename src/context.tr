@@ -27,19 +27,23 @@ extend Context:
             self.list_keys.push(key)
         self.lists.insert(key, items)
 
-    pub def get(self, key: str) -> str:
+    # `ref str` on lookup parameters: key/expr are only compared against
+    # stored keys, never written into the context. --strict proves no borrow
+    # outlives the Context, eliding retain/release on each lookup call.
+    pub def get(self, key: ref str) -> str:
         if self.vars.contains(key): return self.vars.get(key)
         return ""
 
-    pub def has_list(self, key: str) -> bool:
+    pub def has_list(self, key: ref str) -> bool:
         return self.lists.contains(key)
 
-    pub def get_list(self, key: str) -> Vec[str]:
+    pub def get_list(self, key: ref str) -> Vec[str]:
         if self.lists.contains(key): return self.lists.get(key)
         return Vec[str].init(0)
 
     # Evaluate a simple expression: variable, string literal, "true"/"false".
-    pub def eval(self, expr: str) -> str:
+    # `ref str`: expr is read-only (trimmed, compared, sliced) — never stored.
+    pub def eval(self, expr: ref str) -> str:
         mut e = expr.trim()
         mut n = e.len()
         if n >= 2:
@@ -51,7 +55,7 @@ extend Context:
         if e == "false" or e == "none" or e == "null": return ""
         return self.get(e)
 
-    pub def is_truthy(self, expr: str) -> bool:
+    pub def is_truthy(self, expr: ref str) -> bool:
         mut val = self.eval(expr)
         return val != "" and val != "false" and val != "0"
 
